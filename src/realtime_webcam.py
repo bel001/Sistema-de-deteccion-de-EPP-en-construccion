@@ -41,7 +41,7 @@ def create_writer(save_path: str, width: int, height: int):
 
     output_path = Path(save_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    fourcc = cv2.VideoWriter.fourcc("m", "p", "4", "v")
     writer = cv2.VideoWriter(str(output_path), fourcc, 20, (width, height))
 
     if not writer.isOpened():
@@ -132,4 +132,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

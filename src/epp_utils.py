@@ -510,7 +510,7 @@ def draw_big_label(frame, text: str, x1: int, y1: int, color: tuple[int, int, in
 
 
 def draw_detection_boxes(
-    frame,
+    frame: cv2.typing.MatLike,
     result,
     model,
     scale_x: float,
@@ -519,7 +519,7 @@ def draw_detection_boxes(
     conf_thresh: float = 0.25,
     ppe_conf_thresh: float = 0.25,
     helmet_conf_thresh: float = 0.15,
-) -> tuple[object, list[str], int]:
+) -> tuple[cv2.typing.MatLike, list[str], int]:
     """
     Dibuja cajas filtradas en espanol aplicando filtros geometricos y de confianza.
     Retorna (frame, detected_names, unprotected_heads).
@@ -540,7 +540,7 @@ def draw_detection_boxes(
 
     for box in result.boxes:
         cls_id = int(box.cls[0])
-        name = ACTUAL_CLASS_MAP.get(cls_id, model.names[cls_id])
+        name = ACTUAL_CLASS_MAP.get(cls_id) or str(model.names[cls_id])
         conf = float(box.conf[0])
 
         if cls_id not in enabled_class_ids:
@@ -564,7 +564,7 @@ def draw_detection_boxes(
     for box in result.boxes:
         cls_id = int(box.cls[0])
         conf = float(box.conf[0])
-        name = ACTUAL_CLASS_MAP.get(cls_id, model.names[cls_id])
+        name = ACTUAL_CLASS_MAP.get(cls_id) or str(model.names[cls_id])
 
         if cls_id not in enabled_class_ids:
             continue
@@ -707,4 +707,3 @@ def draw_status_panel_big(
             2,
             cv2.LINE_AA,
         )
-
