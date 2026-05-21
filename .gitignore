@@ -1,0 +1,33 @@
+# Entornos locales
+.venv/
+venv/
+env/
+
+# Cache de Python
+__pycache__/
+*.py[cod]
+
+# Archivos generados por las demos
+outputs/
+
+# Datos locales y archivos pesados
+inputs/images/*
+inputs/videos/*
+weights/*.pt
+weights/*.onnx
+
+# Carpetas excluidas del repositorio
+colab/
+docs/
+
+# Mantener estructura minima de carpetas
+!inputs/images/.gitkeep
+!inputs/videos/.gitkeep
+!weights/.gitkeep
+
+# Sistema operativo / editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+pyrightconfig.json
