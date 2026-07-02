@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 import cv2
+import numpy as np
 
 
 # Mapeo corregido de lo que el modelo realmente aprendió a detectar debido al desorden en el entrenamiento original
@@ -29,7 +30,7 @@ PERSON_CLASS_ID = 0
 HEAD_CLASS_ID = 7
 HANDS_CLASS_ID = 6
 GLOVES_CLASS_ID = 5
-SAFETY_VEST_CLASS_ID = -1  # El modelo NO detecta chalecos (no fue entrenado debido a un error de orden original)
+SAFETY_VEST_CLASS_ID = 9  # Solo existe en el modelo nuevo reentrenado con chaleco real.
 HELMET_CLASS_ID = 3
 SHOES_CLASS_ID = 8
 GLASSES_CLASS_ID = 2
@@ -43,6 +44,7 @@ VIDEO_DISPLAY_CLASS_IDS = [
     HELMET_CLASS_ID,
     SHOES_CLASS_ID,
     GLASSES_CLASS_ID,
+    SAFETY_VEST_CLASS_ID,
 ]
 
 # Clases usadas en webcam.
@@ -54,6 +56,7 @@ WEBCAM_CLASS_IDS = [
     HELMET_CLASS_ID,
     SHOES_CLASS_ID,
     GLASSES_CLASS_ID,
+    SAFETY_VEST_CLASS_ID,
 ]
 
 CLASS_COLORS = {
@@ -64,6 +67,7 @@ CLASS_COLORS = {
     "Helmet": (0, 255, 0),        # Casco (Verde)
     "Shoes": (255, 128, 0),       # Calzado (Celeste)
     "Glasses": (255, 255, 0),     # Gafas (Cyan)
+    "Safety-vest": (0, 255, 255),  # Chaleco (Amarillo)
 }
 
 DISPLAY_NAMES = {
@@ -74,6 +78,7 @@ DISPLAY_NAMES = {
     "Helmet": "Casco",
     "Shoes": "Calzado",
     "Glasses": "Gafas",
+    "Safety-vest": "Chaleco",
 }
 
 
@@ -106,6 +111,21 @@ def require_existing_directory(path: str | Path, description: str) -> Path:
         raise NotADirectoryError(f"La ruta de {description} no es una carpeta: {resolved_path}")
 
     return resolved_path
+
+
+def model_supports_class_id(model, class_id: int) -> bool:
+    """Indica si el modelo expone el ID de clase solicitado."""
+    names = getattr(model, "names", {})
+
+    if isinstance(names, Mapping):
+        return class_id in names
+
+    return 0 <= class_id < len(names)
+
+
+def filter_supported_class_ids(model, class_ids: Sequence[int]) -> list[int]:
+    """Evita pedir clases que el modelo actual no tiene."""
+    return [class_id for class_id in class_ids if model_supports_class_id(model, class_id)]
 
 
 def collect_detected_names(result, class_names: Mapping[int, str]) -> list[str]:
@@ -176,36 +196,12 @@ def head_has_helmet(
     return False
 
 
-def analyze_frame_level_compliance(
+def analyze_compliance(
     detected_names: Iterable[str],
-    unprotected_heads: int = 0,
-) -> tuple[bool, list[str]]:
-    """
-    Reglas simples para imagen, batch y webcam.
-    Usa conteo de cabezas sin casco si esta disponible.
-    """
-    names = set(detected_names)
-    alerts: list[str] = []
-
-    if unprotected_heads > 0:
-        alerts.append(f"{unprotected_heads} persona(s) sin casco")
-    elif ("Person" in names or "Head" in names) and "Helmet" not in names:
-        alerts.append("Posible falta de casco")
-
-    if "Hands" in names and "Gloves" not in names:
-        alerts.append("Posible falta de guantes")
-
-    return bool(alerts), alerts
-
-
-def analyze_video_compliance(
-    detected_names: Iterable[str],
-    unprotected_heads: int = 0,
+    unprotected_heads: int | np.int16 = 0,
+    check_vest: bool = False,
 ) -> list[str]:
-    """
-    Reglas usadas por realtime_video.py.
-    Usa conteo de cabezas sin casco si esta disponible.
-    """
+    """Evalua el cumplimiento de EPP y devuelve alertas."""
     names = set(detected_names)
     alerts: list[str] = []
 
@@ -213,11 +209,24 @@ def analyze_video_compliance(
         alerts.append(f"{unprotected_heads} persona(s) sin casco")
     elif ("Person" in names or "Head" in names) and "Helmet" not in names:
         alerts.append("Posible falta de casco")
+
+    if check_vest and "Person" in names and "Safety-vest" not in names:
+        alerts.append("Posible falta de chaleco")
 
     if "Hands" in names and "Gloves" not in names:
         alerts.append("Posible falta de guantes")
 
     return alerts
+
+
+def analyze_frame_level_compliance(
+    detected_names: Iterable[str],
+    unprotected_heads: int | np.int16 = 0,
+    check_vest: bool = False,
+) -> tuple[bool, list[str]]:
+    """Wrapper de analyze_compliance que incluye flag booleano."""
+    alerts = analyze_compliance(detected_names, unprotected_heads, check_vest)
+    return bool(alerts), alerts
 
 
 def draw_status_panel(
@@ -396,25 +405,21 @@ def vest_is_valid_inside_person(
 
 def passes_class_filters(
     name: str,
-    conf: float,
-    x1: int,
-    y1: int,
-    x2: int,
-    y2: int,
-    frame_width: int,
-    frame_height: int,
+    conf: float | np.float32,
+    x1: int | np.int16,
+    y1: int | np.int16,
+    x2: int | np.int16,
+    y2: int | np.int16,
+    frame_area: int | np.int32,
     person_boxes: Sequence[tuple[int, int, int, int]],
     head_boxes: Sequence[tuple[int, int, int, int]] = (),
-    conf_thresh: float = 0.25,
-    ppe_conf_thresh: float = 0.25,
-    helmet_conf_thresh: float = 0.15,
+    conf_thresh: float | np.float32 = 0.25,
+    ppe_conf_thresh: float | np.float32 = 0.25,
+    helmet_conf_thresh: float | np.float32 = 0.15,
 ) -> bool:
-    """
-    Aplica filtros de calidad y tamano segun la clase detectada.
-    """
+    """Aplica filtros de calidad y tamano segun la clase detectada."""
     box_w = x2 - x1
     box_h = y2 - y1
-    frame_area = frame_width * frame_height
     current_area = box_w * box_h
 
     if box_w <= 0 or box_h <= 0:
@@ -513,68 +518,56 @@ def draw_detection_boxes(
     frame: cv2.typing.MatLike,
     result,
     model,
-    scale_x: float,
-    scale_y: float,
+    scale_x: float | np.float32,
+    scale_y: float | np.float32,
     class_ids: Sequence[int] = VIDEO_DISPLAY_CLASS_IDS,
-    conf_thresh: float = 0.25,
-    ppe_conf_thresh: float = 0.25,
-    helmet_conf_thresh: float = 0.15,
-) -> tuple[cv2.typing.MatLike, list[str], int]:
+    conf_thresh: float | np.float32 = 0.25,
+    ppe_conf_thresh: float | np.float32 = 0.25,
+    helmet_conf_thresh: float | np.float32 = 0.15,
+) -> tuple[cv2.typing.MatLike, list[str], int | np.int16]:
     """
     Dibuja cajas filtradas en espanol aplicando filtros geometricos y de confianza.
     Retorna (frame, detected_names, unprotected_heads).
     """
     detected_names: list[str] = []
-    unprotected_heads: int = 0
+    unprotected_heads: int | np.int16 = 0
     enabled_class_ids = set(class_ids)
 
     if result.boxes is None:
         return frame, detected_names, 0
 
     frame_height, frame_width = frame.shape[:2]
+    frame_area = frame_width * frame_height
 
-    # Primero recolectamos todas las cajas de Personas, Cabezas y Cascos validas
     person_boxes: list[tuple[int, int, int, int]] = []
     head_boxes: list[tuple[int, int, int, int]] = []
     helmet_boxes: list[tuple[int, int, int, int]] = []
+    items: list[tuple[str, float | np.float32, int, int, int, int]] = []
 
     for box in result.boxes:
         cls_id = int(box.cls[0])
-        name = ACTUAL_CLASS_MAP.get(cls_id) or str(model.names[cls_id])
-        conf = float(box.conf[0])
-
         if cls_id not in enabled_class_ids:
             continue
 
+        name = ACTUAL_CLASS_MAP.get(cls_id) or str(model.names[cls_id])
+        conf: float | np.float32 = float(box.conf[0])
         x1, y1, x2, y2 = box.xyxy[0].tolist()
         x1 = int(x1 * scale_x)
         y1 = int(y1 * scale_y)
         x2 = int(x2 * scale_x)
         y2 = int(y2 * scale_y)
 
+        items.append((name, conf, x1, y1, x2, y2))
+
         if name == "Person" and conf >= conf_thresh:
-            if (x2 - x1) * (y2 - y1) >= (frame_width * frame_height * 0.02):
+            if (x2 - x1) * (y2 - y1) >= frame_area * 0.02:
                 person_boxes.append((x1, y1, x2, y2))
         elif name == "Head" and conf >= conf_thresh:
             head_boxes.append((x1, y1, x2, y2))
         elif name == "Helmet" and conf >= helmet_conf_thresh:
             helmet_boxes.append((x1, y1, x2, y2))
 
-    # Ahora procesamos todas las detecciones y las dibujamos
-    for box in result.boxes:
-        cls_id = int(box.cls[0])
-        conf = float(box.conf[0])
-        name = ACTUAL_CLASS_MAP.get(cls_id) or str(model.names[cls_id])
-
-        if cls_id not in enabled_class_ids:
-            continue
-
-        x1, y1, x2, y2 = box.xyxy[0].tolist()
-        x1 = int(x1 * scale_x)
-        y1 = int(y1 * scale_y)
-        x2 = int(x2 * scale_x)
-        y2 = int(y2 * scale_y)
-
+    for name, conf, x1, y1, x2, y2 in items:
         if not passes_class_filters(
             name,
             conf,
@@ -582,8 +575,7 @@ def draw_detection_boxes(
             y1,
             x2,
             y2,
-            frame_width,
-            frame_height,
+            frame_area,
             person_boxes,
             head_boxes,
             conf_thresh,
@@ -592,7 +584,6 @@ def draw_detection_boxes(
         ):
             continue
 
-        # Para Head: verificar si tiene casco superpuesto
         if name == "Head":
             current_head = (float(x1), float(y1), float(x2), float(y2))
             float_helmet_boxes = [
@@ -602,12 +593,10 @@ def draw_detection_boxes(
             has_helmet = head_has_helmet(current_head, float_helmet_boxes)
 
             if has_helmet:
-                # Cabeza protegida: no dibujar (el casco ya se dibuja)
                 detected_names.append(name)
                 continue
             else:
-                # Cabeza sin casco: dibujar en rojo con alerta
-                color = (0, 0, 255)  # Rojo
+                color = (0, 0, 255)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 3)
                 draw_big_label(frame, f"Sin casco {conf:.2f}", x1, y1, color)
                 detected_names.append("Head_unprotected")

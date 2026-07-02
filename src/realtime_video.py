@@ -1,22 +1,28 @@
+from __future__ import annotations
+
 import argparse
 import time
 from pathlib import Path
 
 import cv2
+import numpy as np
 from ultralytics import YOLO
 
 from epp_utils import (
+    SAFETY_VEST_CLASS_ID,
     VIDEO_DISPLAY_CLASS_IDS,
-    analyze_video_compliance,
+    analyze_compliance,
     draw_detection_boxes,
     draw_status_panel_big,
+    filter_supported_class_ids,
+    model_supports_class_id,
 )
 
 # ============================================================
 # MAIN
 # ============================================================
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -103,6 +109,8 @@ def main():
 
     print("Cargando modelo...")
     model = YOLO(str(model_path))
+    display_class_ids: list[int] = filter_supported_class_ids(model, VIDEO_DISPLAY_CLASS_IDS)
+    check_vest: bool = model_supports_class_id(model, SAFETY_VEST_CLASS_ID)
 
     print("Abriendo video...")
     cap = cv2.VideoCapture(str(video_path))
@@ -112,21 +120,21 @@ def main():
             f"No se pudo abrir el video: {video_path}"
         )
 
-    original_fps = cap.get(cv2.CAP_PROP_FPS)
+    original_fps: float | np.float32 = cap.get(cv2.CAP_PROP_FPS)
 
     if original_fps is None or original_fps <= 0:
         original_fps = 20
 
-    original_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    original_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    original_width: int = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    original_height: int = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     print(
         f"Video original: "
         f"{original_width}x{original_height} @ {original_fps:.2f} FPS"
     )
 
-    output_width = args.display_width
-    output_height = args.display_height
+    output_width: int = args.display_width
+    output_height: int = args.display_height
 
     output_path = Path(args.save)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -149,12 +157,10 @@ def main():
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(window_name, output_width, output_height)
 
-    prev_time = time.time()
-    frame_count = 0
+    prev_time: float = time.time()
+    frame_count: int = 0
 
-    # Inferencia con el menor umbral para no perder casco.
-    # Despues se aplican filtros por clase en passes_class_filters().
-    inference_conf = min(args.conf, args.ppe_conf, args.helmet_conf)
+    inference_conf: float | np.float32 = min(args.conf, args.ppe_conf, args.helmet_conf)
 
     print("Procesando video...")
 
@@ -174,7 +180,7 @@ def main():
             conf=inference_conf,
             iou=0.50,
             imgsz=args.imgsz,
-            classes=VIDEO_DISPLAY_CLASS_IDS,
+            classes=display_class_ids,
             verbose=False
         )[0]
 
@@ -192,7 +198,7 @@ def main():
             model,
             scale_x,
             scale_y,
-            class_ids=VIDEO_DISPLAY_CLASS_IDS,
+            class_ids=display_class_ids,
             conf_thresh=args.conf,
             ppe_conf_thresh=args.ppe_conf,
             helmet_conf_thresh=args.helmet_conf,
@@ -202,7 +208,11 @@ def main():
         fps = 1.0 / max(now - prev_time, 1e-6)
         prev_time = now
 
-        alerts = analyze_video_compliance(detected_names, unprotected_heads)
+        alerts = analyze_compliance(
+            detected_names,
+            unprotected_heads,
+            check_vest=check_vest,
+        )
 
         draw_status_panel_big(
             display_frame,

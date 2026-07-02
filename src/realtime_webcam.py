@@ -5,14 +5,18 @@ import time
 from pathlib import Path
 
 import cv2
+import numpy as np
 from ultralytics import YOLO
 
 from epp_utils import (
     DEFAULT_IOU,
+    SAFETY_VEST_CLASS_ID,
     WEBCAM_CLASS_IDS,
     analyze_frame_level_compliance,
     draw_detection_boxes,
     draw_status_panel,
+    filter_supported_class_ids,
+    model_supports_class_id,
     require_existing_file,
 )
 
@@ -35,7 +39,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def create_writer(save_path: str, width: int, height: int):
+def create_writer(save_path: str, width: int, height: int) -> cv2.VideoWriter | None:
     if not save_path:
         return None
 
@@ -55,6 +59,8 @@ def main() -> None:
     model_path = require_existing_file(args.model, "el modelo")
 
     model = YOLO(str(model_path))
+    webcam_class_ids: list[int] = filter_supported_class_ids(model, WEBCAM_CLASS_IDS)
+    check_vest: bool = model_supports_class_id(model, SAFETY_VEST_CLASS_ID)
     cap = cv2.VideoCapture(args.camera)
 
     if not cap.isOpened():
@@ -63,20 +69,21 @@ def main() -> None:
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    writer = create_writer(args.save, width, height)
-    prev_time = time.time()
+    width: int = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height: int = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    writer: cv2.VideoWriter | None = create_writer(args.save, width, height)
+    prev_time: float = time.time()
 
     if args.no_display:
         print("Ejecutando deteccion sin ventana. Usa Ctrl+C para salir.")
     else:
         print("Ejecutando deteccion en tiempo real. Presiona q para salir.")
 
-    inference_conf = min(args.conf, args.ppe_conf, args.helmet_conf)
+    inference_conf: float | np.float32 = min(args.conf, args.ppe_conf, args.helmet_conf)
 
     try:
         while True:
+            ok: bool
             ok, frame = cap.read()
 
             if not ok:
@@ -87,18 +94,17 @@ def main() -> None:
                 conf=inference_conf,
                 iou=DEFAULT_IOU,
                 imgsz=416,
-                classes=WEBCAM_CLASS_IDS,
+                classes=webcam_class_ids,
                 verbose=False,
             )[0]
 
-            annotated = frame.copy()
             annotated, detected_names, unprotected_heads = draw_detection_boxes(
-                annotated,
+                frame,
                 result,
                 model,
                 scale_x=1.0,
                 scale_y=1.0,
-                class_ids=WEBCAM_CLASS_IDS,
+                class_ids=webcam_class_ids,
                 conf_thresh=args.conf,
                 ppe_conf_thresh=args.ppe_conf,
                 helmet_conf_thresh=args.helmet_conf,
@@ -108,7 +114,11 @@ def main() -> None:
             fps = 1.0 / max(now - prev_time, 1e-6)
             prev_time = now
 
-            _, alerts = analyze_frame_level_compliance(detected_names, unprotected_heads)
+            _, alerts = analyze_frame_level_compliance(
+                detected_names,
+                unprotected_heads,
+                check_vest=check_vest,
+            )
             draw_status_panel(annotated, fps, detected_names, alerts)
 
             if writer is not None:

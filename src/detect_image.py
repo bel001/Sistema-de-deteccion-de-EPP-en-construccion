@@ -4,13 +4,17 @@ import argparse
 from pathlib import Path
 
 import cv2
+import numpy as np
 from ultralytics import YOLO
 
 from epp_utils import (
+    SAFETY_VEST_CLASS_ID,
     VIDEO_DISPLAY_CLASS_IDS,
     analyze_frame_level_compliance,
     draw_detection_boxes,
     draw_status_panel,
+    filter_supported_class_ids,
+    model_supports_class_id,
     require_existing_file,
 )
 
@@ -39,28 +43,33 @@ def main() -> None:
     output_path = Path(args.save)
 
     model = YOLO(str(model_path))
+    display_class_ids: list[int] = filter_supported_class_ids(model, VIDEO_DISPLAY_CLASS_IDS)
+    check_vest: bool = model_supports_class_id(model, SAFETY_VEST_CLASS_ID)
     frame = cv2.imread(str(image_path))
 
     if frame is None:
         raise RuntimeError(f"No se pudo leer la imagen: {image_path}")
 
-    inference_conf = min(args.conf, args.ppe_conf, args.helmet_conf)
+    inference_conf: float | np.float32 = min(args.conf, args.ppe_conf, args.helmet_conf)
     result = model.predict(frame, conf=inference_conf, verbose=False)[0]
 
-    annotated = frame.copy()
     annotated, detected_names, unprotected_heads = draw_detection_boxes(
-        annotated,
+        frame,
         result,
         model,
         scale_x=1.0,
         scale_y=1.0,
-        class_ids=VIDEO_DISPLAY_CLASS_IDS,
+        class_ids=display_class_ids,
         conf_thresh=args.conf,
         ppe_conf_thresh=args.ppe_conf,
         helmet_conf_thresh=args.helmet_conf,
     )
 
-    _, alerts = analyze_frame_level_compliance(detected_names, unprotected_heads)
+    _, alerts = analyze_frame_level_compliance(
+        detected_names,
+        unprotected_heads,
+        check_vest=check_vest,
+    )
     draw_status_panel(annotated, 0.0, detected_names, alerts)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -76,4 +85,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
