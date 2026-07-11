@@ -124,6 +124,90 @@ weights/
 
 ---
 
+## 🪟 Instalación rápida en Windows
+
+Estos pasos asumen Windows 10/11 con Python 3.10 o superior, Git y drivers NVIDIA instalados.
+
+### 1. Clonar el proyecto
+
+Abre PowerShell y ejecuta:
+
+```powershell
+git clone https://github.com/bel001/Sistema-de-deteccion-de-EPP-en-construccion.git
+cd Sistema-de-deteccion-de-EPP-en-construccion
+```
+
+### 2. Crear y activar el entorno virtual
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+```
+
+Si PowerShell bloquea la activación del entorno, ejecuta una vez:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Cierra y vuelve a abrir PowerShell, entra otra vez al proyecto y activa el entorno:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+### 3. Instalar dependencias
+
+```powershell
+pip install -r requirements.txt
+```
+
+Para usar GPU NVIDIA, instala PyTorch con CUDA según el comando oficial de https://pytorch.org/get-started/locally/. Un ejemplo común es:
+
+```powershell
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+```
+
+### 4. Verificar que Windows detecta la GPU
+
+```powershell
+nvidia-smi
+python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.device_count()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'sin cuda')"
+```
+
+Si aparece `True` y el nombre de la GPU, la aplicación usará NVIDIA automáticamente. Si aparece `False`, revisa el driver NVIDIA, la instalación de PyTorch con CUDA y la configuración de gráficos de Windows.
+
+Para forzar alto rendimiento en Windows:
+
+1. Abre `Configuración > Sistema > Pantalla > Gráficos`.
+2. Agrega el ejecutable `python.exe` del entorno virtual: `.venv\Scripts\python.exe`.
+3. En `Opciones`, selecciona `Alto rendimiento`.
+
+### 5. Colocar el modelo y ejecutar
+
+Copia el modelo entrenado en:
+
+```text
+weights\best.pt
+```
+
+Ejecuta la interfaz principal:
+
+```powershell
+python main.py
+```
+
+También puedes ejecutar los scripts individuales:
+
+```powershell
+python src\realtime_webcam.py --camera 0
+python src\realtime_video.py --video inputs\videos\tu_video.mp4
+python src\detect_image.py --image inputs\images\tu_imagen.jpg
+```
+
+---
+
 ## 🎮 Uso del Sistema
 
 ### 📹 Opción 1: Detección en Video

@@ -15,6 +15,7 @@ import numpy as np
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
+import torch
 from ultralytics import YOLO
 
 from src.epp_utils import (
@@ -217,10 +218,21 @@ class DetectionEngine:
         if not self.model_path.exists():
             raise FileNotFoundError(f"No se encontró el modelo: {self.model_path}")
 
+        self.uses_cuda = torch.cuda.is_available()
+        self.predict_device = 0 if self.uses_cuda else "cpu"
+        self.runtime_label = self._runtime_label()
+        if self.uses_cuda:
+            torch.backends.cudnn.benchmark = True
+
         self.model = YOLO(str(self.model_path))
         self.webcam_ids = filter_supported_class_ids(self.model, WEBCAM_CLASS_IDS)
         self.video_ids = filter_supported_class_ids(self.model, VIDEO_DISPLAY_CLASS_IDS)
         self.check_vest = model_supports_class_id(self.model, SAFETY_VEST_CLASS_ID)
+
+    def _runtime_label(self) -> str:
+        if self.uses_cuda:
+            return f"GPU: {torch.cuda.get_device_name(0)}"
+        return "CPU (CUDA no disponible)"
 
     def _predict(self, frame: np.ndarray, conf: float, class_ids: list[int],
                  imgsz: int) -> object:
@@ -230,6 +242,8 @@ class DetectionEngine:
             iou=DEFAULT_IOU,
             imgsz=imgsz,
             classes=class_ids,
+            device=self.predict_device,
+            half=self.uses_cuda,
             verbose=False,
         )[0]
 
@@ -460,10 +474,12 @@ class WebcamView(BaseView):
         self._engine: DetectionEngine | None = None
         self._thread: threading.Thread | None = None
         self._photo: ImageTk.PhotoImage | None = None
+        self._last_error_report_time = 0.0
         self._report_data = {
             "fps": 0.0, "detections": [], "alerts": [],
             "unprotected_heads": 0, "persons": 0, "frames": 0,
             "start_time": 0.0, "has_vest_model": False,
+            "runtime": "",
         }
 
         body = tk.Frame(self, bg=COLORS["bg"])
@@ -506,6 +522,7 @@ class WebcamView(BaseView):
         tk.Label(p, text="RENDIMIENTO", bg=COLORS["panel"], fg=COLORS["accent"],
                  font=FONTS["small"]).pack(fill="x", padx=12, pady=(12, 2))
         self._fps_value = self._make_stat_bar(p, "FPS", "0")
+        self._runtime_value = self._make_stat_bar(p, "Backend", "-")
         self._frame_count_value = self._make_stat_bar(p, "Frames", "0")
         self._time_elapsed_value = self._make_stat_bar(p, "Tiempo", "00:00")
 
@@ -553,8 +570,12 @@ class WebcamView(BaseView):
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
         self._report_data["start_time"] = time.time()
+        self._report_data["runtime"] = self._engine.runtime_label
         self._running = True
-        self._set_status("Cámara iniciada")
+        if self._engine.uses_cuda:
+            self._set_status(f"Cámara iniciada — {self._engine.runtime_label}")
+        else:
+            self._set_status("Cámara iniciada — usando CPU, CUDA no disponible")
 
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._thread.start()
@@ -573,7 +594,13 @@ class WebcamView(BaseView):
                     continue
 
                 result = self._engine.detect_webcam_frame(frame)
-            except Exception:
+            except (RuntimeError, cv2.error) as exc:
+                now = time.time()
+                if now - self._last_error_report_time > 2.0:
+                    self._last_error_report_time = now
+                    self._run_on_ui(lambda message=str(exc): self._set_status(
+                        f"Error de inferencia: {message[:120]}"
+                    ))
                 continue
 
             data = {
@@ -629,6 +656,7 @@ class WebcamView(BaseView):
 
         uh_color = COLORS["danger"] if self._report_data["unprotected_heads"] > 0 else COLORS["success"]
         self._fps_value.configure(text=f"{fps:.1f}")
+        self._runtime_value.configure(text=self._report_data["runtime"] or "-")
         self._frame_count_value.configure(text=str(self._report_data["frames"]))
         self._time_elapsed_value.configure(text=f"{mins:02d}:{secs:02d}")
         self._persons_value.configure(text=str(self._report_data["persons"]))
