@@ -15,9 +15,7 @@ import numpy as np
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
-import torch
-from ultralytics import YOLO
-
+from src.engine import EPPDetectionEngine as DetectionEngine, DetectionResult
 from src.epp_utils import (
     DEFAULT_IOU,
     IMAGE_EXTENSIONS,
@@ -25,6 +23,7 @@ from src.epp_utils import (
     VIDEO_DISPLAY_CLASS_IDS,
     WEBCAM_CLASS_IDS,
     analyze_compliance,
+    detect_connected_cameras,
     draw_detection_boxes,
     draw_status_panel,
     draw_status_panel_big,
@@ -161,9 +160,11 @@ def photo_from_frame(label: tk.Widget, frame: np.ndarray,
     ch = label.winfo_height() or fallback_size[1]
     h, w = frame.shape[:2]
     scale = min(cw / w, ch / h)
-    resized = cv2.resize(frame, (int(w * scale), int(h * scale)))
+    nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
+    resized = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
     rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-    return ImageTk.PhotoImage(image=Image.fromarray(rgb))
+    img = Image.frombytes("RGB", (nw, nh), rgb.tobytes())
+    return ImageTk.PhotoImage(image=img)
 
 
 class CardButton(tk.Frame):
@@ -203,112 +204,6 @@ class CardButton(tk.Frame):
         self.configure(bg=COLORS["border"])
 
 
-@dataclass
-class DetectionResult:
-    annotated: np.ndarray
-    names: list[str]
-    unprotected_heads: int
-    alerts: list[str]
-    persons: int = 0
-
-
-class DetectionEngine:
-    def __init__(self, model_path: str = "weights/best.pt") -> None:
-        self.model_path = Path(model_path)
-        if not self.model_path.exists():
-            raise FileNotFoundError(f"No se encontró el modelo: {self.model_path}")
-
-        self.uses_cuda = torch.cuda.is_available()
-        self.predict_device = 0 if self.uses_cuda else "cpu"
-        self.runtime_label = self._runtime_label()
-        if self.uses_cuda:
-            torch.backends.cudnn.benchmark = True
-
-        self.model = YOLO(str(self.model_path))
-        self.webcam_ids = filter_supported_class_ids(self.model, WEBCAM_CLASS_IDS)
-        self.video_ids = filter_supported_class_ids(self.model, VIDEO_DISPLAY_CLASS_IDS)
-        self.check_vest = model_supports_class_id(self.model, SAFETY_VEST_CLASS_ID)
-
-    def _runtime_label(self) -> str:
-        if self.uses_cuda:
-            return f"GPU: {torch.cuda.get_device_name(0)}"
-        return "CPU (CUDA no disponible)"
-
-    def _predict(self, frame: np.ndarray, conf: float, class_ids: list[int],
-                 imgsz: int) -> object:
-        return self.model.predict(
-            frame,
-            conf=conf,
-            iou=DEFAULT_IOU,
-            imgsz=imgsz,
-            classes=class_ids,
-            device=self.predict_device,
-            half=self.uses_cuda,
-            verbose=False,
-        )[0]
-
-    def _detect(
-        self,
-        frame: np.ndarray,
-        class_ids: list[int],
-        conf_thresh: float,
-        ppe_conf_thresh: float,
-        helmet_conf_thresh: float,
-        imgsz: int,
-    ) -> DetectionResult:
-        inference_conf = min(conf_thresh, ppe_conf_thresh, helmet_conf_thresh)
-        result = self._predict(frame, inference_conf, class_ids, imgsz)
-        annotated, names, heads = draw_detection_boxes(
-            frame,
-            result,
-            self.model,
-            scale_x=1.0,
-            scale_y=1.0,
-            class_ids=class_ids,
-            conf_thresh=conf_thresh,
-            ppe_conf_thresh=ppe_conf_thresh,
-            helmet_conf_thresh=helmet_conf_thresh,
-        )
-        alerts = analyze_compliance(names, heads, check_vest=self.check_vest)
-        persons = sum(1 for name in names if name == "Person")
-        return DetectionResult(annotated, names, int(heads), alerts, persons)
-
-    def detect_webcam_frame(self, frame: np.ndarray) -> DetectionResult:
-        return self._detect(
-            frame,
-            class_ids=self.webcam_ids,
-            conf_thresh=0.25,
-            ppe_conf_thresh=0.25,
-            helmet_conf_thresh=0.15,
-            imgsz=416,
-        )
-
-    def detect_image_frame(self, frame: np.ndarray) -> DetectionResult:
-        result = self._detect(
-            frame,
-            class_ids=self.video_ids,
-            conf_thresh=0.25,
-            ppe_conf_thresh=0.25,
-            helmet_conf_thresh=0.15,
-            imgsz=640,
-        )
-        draw_status_panel(result.annotated, 0.0, result.names, result.alerts)
-        return result
-
-    def detect_batch_frame(self, frame: np.ndarray) -> DetectionResult:
-        return self.detect_image_frame(frame)
-
-    def detect_video_frame(self, frame: np.ndarray, fps: float) -> DetectionResult:
-        result = self._detect(
-            frame,
-            class_ids=self.video_ids,
-            conf_thresh=0.50,
-            ppe_conf_thresh=0.45,
-            helmet_conf_thresh=0.15,
-            imgsz=640,
-        )
-        draw_status_panel_big(result.annotated, fps, result.names, result.alerts)
-        return result
 
 
 class MainApp(tk.Tk):
@@ -475,6 +370,9 @@ class WebcamView(BaseView):
         self._thread: threading.Thread | None = None
         self._photo: ImageTk.PhotoImage | None = None
         self._last_error_report_time = 0.0
+        self._current_source: int | str = 0
+        self._mirror_var = tk.BooleanVar(value=True)
+
         self._report_data = {
             "fps": 0.0, "detections": [], "alerts": [],
             "unprotected_heads": 0, "persons": 0, "frames": 0,
@@ -490,6 +388,45 @@ class WebcamView(BaseView):
                                     highlightbackground=COLORS["border"],
                                     highlightthickness=1, bd=0)
         video_frame.pack(side="left", fill="both", expand=True)
+
+        # Barra de control de cámara superior
+        ctrl_bar = tk.Frame(video_frame, bg=COLORS["panel"])
+        ctrl_bar.pack(fill="x", padx=8, pady=4)
+
+        tk.Label(ctrl_bar, text="Fuente de Cámara:", bg=COLORS["panel"],
+                 fg=COLORS["text"], font=FONTS["small"]).pack(side="left", padx=(0, 4))
+
+        self._camera_combo = ttk.Combobox(
+            ctrl_bar,
+            values=[],
+            state="readonly",
+            width=28,
+            font=FONTS["small"],
+        )
+        self._camera_combo.pack(side="left", padx=4)
+        self._camera_combo.bind("<<ComboboxSelected>>", self._on_combo_changed)
+
+        tk.Button(ctrl_bar, text="🔍 Refrescar", bg=COLORS["panel"],
+                  fg=COLORS["text"], font=FONTS["small"], bd=1, cursor="hand2",
+                  activebackground=COLORS["border"], command=self._scan_and_populate_cameras
+                  ).pack(side="left", padx=2)
+
+        self._camera_entry = tk.Entry(ctrl_bar, bg=COLORS["bg"], fg=COLORS["text"],
+                                      font=FONTS["small"], bd=1,
+                                      highlightbackground=COLORS["border"], width=20)
+        self._camera_entry.insert(0, "rtsp://...")
+
+        tk.Button(ctrl_bar, text="▶ Conectar / Cambiar", bg=COLORS["success"],
+                  fg=COLORS["text"], font=FONTS["small"], bd=0, cursor="hand2",
+                  activebackground=COLORS["border"], command=self._switch_camera
+                  ).pack(side="left", padx=6)
+
+        tk.Checkbutton(ctrl_bar, text="🪞 Espejo", variable=self._mirror_var,
+                       bg=COLORS["panel"], fg=COLORS["text"],
+                       selectcolor=COLORS["panel"], activebackground=COLORS["panel"],
+                       activeforeground=COLORS["text"], font=FONTS["small"]
+                       ).pack(side="left", padx=8)
+
         self._canvas = tk.Label(video_frame, bg="#000000")
         self._canvas.pack(fill="both", expand=True, padx=4, pady=4)
 
@@ -514,7 +451,48 @@ class WebcamView(BaseView):
         self._report_scroll.pack(side="right", fill="y")
 
         self._build_report_widgets()
-        self._start_webcam()
+        self._scan_and_populate_cameras()
+        self._start_webcam(source=self._current_source)
+
+    def _scan_and_populate_cameras(self) -> None:
+        self._detected_cams = detect_connected_cameras()
+        labels = [label for _, label in self._detected_cams]
+        self._camera_combo["values"] = labels
+        if labels:
+            self._camera_combo.current(0)
+            self._current_source = self._detected_cams[0][0]
+        self._on_combo_changed()
+
+    def _on_combo_changed(self, event=None) -> None:
+        idx = self._camera_combo.current()
+        if idx >= 0 and idx < len(self._detected_cams):
+            src_val, _ = self._detected_cams[idx]
+            if src_val == "rtsp":
+                self._camera_entry.pack(side="left", padx=4)
+            else:
+                self._camera_entry.pack_forget()
+
+    def _switch_camera(self) -> None:
+        idx = self._camera_combo.current()
+        if idx >= 0 and idx < len(self._detected_cams):
+            src_val, _ = self._detected_cams[idx]
+            if src_val == "rtsp":
+                custom = self._camera_entry.get().strip()
+                if custom.isdigit():
+                    source = int(custom)
+                elif custom and custom != "rtsp://...":
+                    source = custom
+                else:
+                    source = 0
+            else:
+                source = src_val
+        else:
+            source = 0
+
+        self._set_status(f"Conectando a cámara ({source})...")
+        self._cleanup()
+        time.sleep(0.2)
+        self._start_webcam(source=source)
 
     def _build_report_widgets(self) -> None:
         p = self._report_inner
@@ -554,28 +532,35 @@ class WebcamView(BaseView):
         val.pack(side="right")
         return val
 
-    def _start_webcam(self) -> None:
+    def _start_webcam(self, source: int | str = 0) -> None:
         self._engine = self._load_engine()
         if self._engine is None:
             self.after(0, lambda: self.app._show_frame(MainMenu))
             return
 
-        self._cap = cv2.VideoCapture(0)
+        self._current_source = source
+        backend = cv2.CAP_V4L2 if isinstance(source, int) and hasattr(cv2, "CAP_V4L2") else cv2.CAP_ANY
+        self._cap = cv2.VideoCapture(source, backend)
         if not self._cap.isOpened():
-            messagebox.showerror("Error", "No se pudo abrir la cámara.")
-            self.after(0, lambda: self.app._show_frame(MainMenu))
+            messagebox.showerror(
+                "Error de Cámara",
+                f"No se pudo abrir la cámara o fuente de video: '{source}'.\n"
+                "Verifica que la cámara esté conectada o que la dirección IP sea correcta."
+            )
             return
 
-        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        if isinstance(source, int):
+            self._cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*"MJPG"))
+            self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            self._cap.set(cv2.CAP_PROP_FPS, 30)
+            self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
         self._report_data["start_time"] = time.time()
+        self._report_data["frames"] = 0
         self._report_data["runtime"] = self._engine.runtime_label
         self._running = True
-        if self._engine.uses_cuda:
-            self._set_status(f"Cámara iniciada — {self._engine.runtime_label}")
-        else:
-            self._set_status("Cámara iniciada — usando CPU, CUDA no disponible")
+        self._set_status(f"Cámara activa ({source}) — {self._engine.runtime_label}")
 
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._thread.start()
@@ -587,7 +572,8 @@ class WebcamView(BaseView):
             if not ok:
                 continue
 
-            #frame = cv2.flip(frame, 2)
+            if self._mirror_var.get():
+                frame = cv2.flip(frame, 1)
 
             try:
                 if self._engine is None:
@@ -620,12 +606,19 @@ class WebcamView(BaseView):
         if not self._running or not self.winfo_exists():
             return
 
-        try:
-            data = self._frame_queue.get_nowait()
-        except queue.Empty:
+        latest_data = None
+        while True:
+            try:
+                latest_data = self._frame_queue.get_nowait()
+            except queue.Empty:
+                break
+
+        if latest_data is None:
             if self.winfo_exists():
-                self.after(16, self._update_display)
+                self.after(10, self._update_display)
             return
+
+        data = latest_data
 
         now = time.time()
         elapsed = now - self._report_data["start_time"]
@@ -643,7 +636,7 @@ class WebcamView(BaseView):
         self._set_status(f"Cámara activa — {fps:.1f} FPS")
 
         if self.winfo_exists():
-            self.after(16, self._update_display)
+            self.after(10, self._update_display)
 
     def _update_video(self, frame: np.ndarray) -> None:
         self._photo = photo_from_frame(self._canvas, frame, (854, 480))

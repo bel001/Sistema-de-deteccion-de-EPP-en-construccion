@@ -82,6 +82,53 @@ DISPLAY_NAMES = {
 }
 
 
+def detect_connected_cameras() -> list[tuple[int | str, str]]:
+    """
+    Escanea y devuelve una lista de cámaras físicas verdaderamente conectadas
+    al equipo (índice/fuente y etiqueta legible).
+    """
+    found_cameras: list[tuple[int | str, str]] = []
+    physical_devices: set[Path] = set()
+
+    v4l_dir = Path("/sys/class/video4linux")
+    if v4l_dir.exists():
+        video_nodes = sorted(
+            v4l_dir.glob("video*"),
+            key=lambda p: int(p.name.replace("video", "")) if p.name.replace("video", "").isdigit() else 999
+        )
+        for p in video_nodes:
+            try:
+                idx = int(p.name.replace("video", ""))
+                name_file = p / "name"
+                dev_name = name_file.read_text().strip() if name_file.exists() else f"Cámara {idx}"
+
+                if "metadata" in dev_name.lower() or "depth" in dev_name.lower() or "ir" in dev_name.lower():
+                    continue
+
+                parent_bus = p.resolve().parent
+                if parent_bus not in physical_devices:
+                    physical_devices.add(parent_bus)
+                    found_cameras.append((idx, f"Cámara {idx}: {dev_name}"))
+            except Exception:
+                continue
+
+    if not found_cameras:
+        for idx in range(6):
+            try:
+                backend = cv2.CAP_V4L2 if hasattr(cv2, "CAP_V4L2") else cv2.CAP_ANY
+                cap = cv2.VideoCapture(idx, backend)
+                if cap.isOpened():
+                    cap.release()
+                    found_cameras.append((idx, f"Cámara {idx}"))
+            except Exception:
+                continue
+
+    if not found_cameras:
+        found_cameras.append((0, "Cámara 0 (Predeterminada)"))
+
+    found_cameras.append(("rtsp", "🌐 Cámara IP / RTSP Personalizada"))
+    return found_cameras
+
 
 def require_existing_path(path: str | Path, description: str) -> Path:
     """Devuelve la ruta validada o falla con un mensaje claro."""
