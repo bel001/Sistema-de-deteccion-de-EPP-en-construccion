@@ -53,9 +53,9 @@ El sistema genera las siguientes alertas automáticas:
 |---|---|---|
 | `X persona(s) sin casco` | Se detecta una cabeza sin casco superpuesto | ✅ Activa |
 | `Posible falta de guantes` | Se detectan manos sin guantes | ✅ Activa |
-| `Posible falta de chaleco` | — | ⚠️ Desactivada (ver nota) |
+| `Posible falta de chaleco` | Persona sin chaleco (requiere modelo con clase 9) | ✅ Activa* |
 
-> **Nota sobre el chaleco**: El modelo actual (`best.pt`) no detecta chalecos de seguridad debido a un error de indexación durante el entrenamiento original en Google Colab. Para habilitarlo, se requiere reentrenar el modelo incluyendo la clase `Safety-vest`.
+> **Nota sobre el chaleco**: El modelo reentrenado (`best.pt`, 10 clases) ya incluye `Safety-vest` (ID 9). Si tu `best.pt` es antiguo de 9 clases, el sistema desactiva automáticamente la alerta de chaleco (`check_vest=False` vía `model_supports_class_id`).
 
 ---
 
@@ -234,12 +234,13 @@ python src/realtime_video.py --video inputs/videos/tu_video.mp4 --no-display --s
 | `--model` | `weights/best.pt` | Ruta al modelo YOLO |
 | `--video` | *(requerido)* | Ruta del video de entrada |
 | `--conf` | `0.25` | Umbral de confianza general |
-| `--ppe-conf` | `0.25` | Umbral para guantes y otros EPP |
+| `--ppe-conf` | `0.25` | Umbral para guantes/chaleco |
 | `--helmet-conf` | `0.15` | Umbral especial para cascos |
 | `--save` | `outputs/video_resultado.mp4` | Ruta del video de salida |
 | `--no-display` | `false` | No abrir ventana de visualización |
+| `--display-width/height` | `854x480` | Resolución de salida con letterbox |
 
-> **Controles**: Presiona `q` para salir de la visualización.
+> **Controles**: Presiona `q` para salir. El video usa letterbox (no deforma) y codec `mp4v`.
 
 ---
 

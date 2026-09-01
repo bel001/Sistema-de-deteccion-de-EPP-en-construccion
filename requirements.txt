@@ -1,11 +1,13 @@
 # Dependencias con soporte de aceleración por GPU CUDA en Linux
 --index-url https://download.pytorch.org/whl/cu121
-torch
-torchvision
-torchaudio
+torch==2.5.1
+torchvision==0.20.1
+torchaudio==2.5.1
 
-ultralytics==8.4.51
-opencv-python==4.10.0.84
-numpy==2.3.5
-pandas==3.0.3
-pillow
+# Detección - rangos compatibles probados (ultralytics 8.4.x, opencv 4.10+)
+ultralytics>=8.4.51,<9
+opencv-python>=4.10.0.84
+numpy>=1.24,<3
+pandas>=2.0
+pillow>=10
+PyYAML>=6.0

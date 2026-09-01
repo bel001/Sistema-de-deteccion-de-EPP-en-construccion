@@ -32,11 +32,19 @@ def main() -> None:
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    MAX_BATCH_IMAGES = 1000
     images = sorted(
-        path for path in input_dir.rglob("*") if path.suffix.lower() in IMAGE_EXTENSIONS
+        p for p in input_dir.rglob("*")
+        if p.is_file() and not p.is_symlink() and p.suffix.lower() in IMAGE_EXTENSIONS
     )
+    if len(images) > MAX_BATCH_IMAGES:
+        print(f"⚠️  Se encontraron {len(images)} imágenes, se procesarán solo {MAX_BATCH_IMAGES} por seguridad.")
+        images = images[:MAX_BATCH_IMAGES]
     csv_path = output_dir / "resultados_batch.csv"
     processed_count = 0
+
+    def csv_safe(s: str) -> str:
+        return "'" + s if s and s[0] in "=@+-" else s
 
     with csv_path.open("w", newline="", encoding="utf-8") as file:
         writer = csv.writer(file)
@@ -56,10 +64,10 @@ def main() -> None:
 
             writer.writerow(
                 [
-                    str(image_path),
-                    ";".join(sorted(set(result.names))),
-                    ";".join(result.alerts),
-                    str(output_image_path),
+                    csv_safe(str(image_path)),
+                    csv_safe(";".join(sorted(set(result.names)))),
+                    csv_safe(";".join(result.alerts)),
+                    csv_safe(str(output_image_path)),
                 ]
             )
             processed_count += 1

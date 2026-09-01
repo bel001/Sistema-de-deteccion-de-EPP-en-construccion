@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+      - name: Unit tests (sin modelo pesado — mocks)
+        run: |
+          pytest tests/test_epp_utils.py -v
+      - name: Lint compile check
+        run: |
+          python -m py_compile src/epp_utils.py src/engine.py main.py
+          python -m py_compile src/realtime_video.py src/realtime_webcam.py src/detect_image.py src/batch_images.py

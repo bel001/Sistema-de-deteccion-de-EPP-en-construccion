@@ -7,9 +7,10 @@ if [ ! -d ".venv" ]; then
     echo "🐍 Creando entorno virtual .venv..."
     python3 -m venv .venv
     .venv/bin/python -m pip install --upgrade pip
-    .venv/bin/pip install ultralytics opencv-python numpy pandas pillow torch torchvision torchaudio
+    .venv/bin/pip install -r requirements.txt
 fi
 
+# best.pt.zip es copia idéntica de best.pt (formato torch.save zip)
 if [ ! -f "weights/best.pt" ] && [ -f "weights/best.pt.zip" ]; then
     echo "📦 Preparando modelo weights/best.pt..."
     cp weights/best.pt.zip weights/best.pt

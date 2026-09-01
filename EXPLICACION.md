@@ -27,30 +27,21 @@ Durante el entrenamiento en Colab del dataset SH17, las 17 clases originales se 
 ### Mapeo Interno Incorrecto (Metadatos) vs Semántica Real (Corregido)
 Esto causaba que el modelo retornara predicciones que el código interpretaba incorrectamente (por ejemplo, detectar un casco pero pintarlo como "Foot", o detectar una cabeza expuesta y pintarla como "Safety-vest").
 
-Para solucionar esto de raíz, implementamos `ACTUAL_CLASS_MAP` en [epp_utils.py](file:///home/rodrigo/Escritorio/Codigos/PROYECTO%20PERCEPCION/src/epp_utils.py):
+Para solucionar esto de raíz, implementamos `ACTUAL_CLASS_MAP` en `src/epp_utils.py:11`:
 ```python
 ACTUAL_CLASS_MAP = {
-    0: "Person",       # Persona (ID 0)
-    1: "Ear",          # Oreja (ID 1)
-    2: "Glasses",      # Gafas (ID 2)
-    3: "Helmet",       # Casco (ID 3) - En los metadatos decía "Foot"
-    4: "Face",         # Cara (ID 4)
-    5: "Gloves",       # Guantes (ID 5)
-    6: "Hands",        # Manos (ID 6) - En los metadatos decía "Shoes"
-    7: "Head",         # Cabeza (ID 7) - En los metadatos decía "Safety-vest"
-    8: "Shoes",        # Calzado (ID 8) - En los metadatos decía "Helmet"
+    0: "Person",  1: "Ear", 2: "Glasses", 3: "Helmet", 4: "Face",
+    5: "Gloves", 6: "Hands", 7: "Head", 8: "Shoes", 9: "Safety-vest",
 }
 ```
-Gracias a este diccionario, interceptamos cualquier clase devuelta por el modelo y la traducimos a su valor físico real antes de realizar cualquier lógica.
+Gracias a este diccionario, interceptamos cualquier clase devuelta por el modelo y la traducimos a su valor físico real. El modelo actual reentrenado (`best.pt`) ya expone 10 clases (0-9) y el mapeo es 1:1 con `model.names`.
 
-### 2.1 Nota Importante sobre la Detección de Chaleco (Safety-vest)
+### 2.1 Detección de Chaleco (Safety-vest) — Activa
 
-> [!WARNING]
-> **El modelo actual (`best.pt`) NO tiene la capacidad de detectar chalecos de seguridad.**
-> 
-> * **Causa Raíz**: Al revisar el proceso de entrenamiento en el notebook de Google Colab (`01_ENTRENAMIENTO_COLAB_SH17_CONSTRUCTION_YOLOV8.ipynb`), se identificó que durante el filtrado y reordenamiento de clases del dataset SH17 original (de 17 a 9 clases), la clase `Safety-vest` (ID 12 en SH17 original) fue omitida por un error de indexación. Por lo tanto, los pesos del modelo actual no contienen conocimiento sobre esta clase.
-> * **Ajuste en la Lógica Local**: Para evitar alertas de error y falsos positivos constantes e interminables en pantalla, se ha establecido `SAFETY_VEST_CLASS_ID = -1` y se han desactivado temporalmente las comprobaciones automáticas del chaleco en las funciones de cumplimiento (`compliance`).
-> * **Solución a Futuro**: Para que el sistema detecte chalecos, se requiere corregir el código del dataset en el notebook de Google Colab para incluir el chaleco, realizar un nuevo entrenamiento, exportar los pesos resultantes y sustituir el archivo `weights/best.pt` local.
+> El modelo reentrenado (`best.pt`, 10 clases, `CONSTRUCTION_NAMES` en Colab) incluye `Safety-vest` como ID 9.
+> * **Activación automática**: `EPPDetectionEngine` verifica `model_supports_class_id(model, 9)` (`src/engine.py:88`). Si el modelo no tiene la clase 9 (modelos antiguos de 9 clases), `check_vest=False` y no se generan alertas falsas.
+> * **Filtro anti-falso-positivo**: `vest_is_valid_inside_person` exige que el chaleco esté dentro del torso de una `Person` y no solapado con `Head` (`src/epp_utils.py:402`), eliminando confusión cabello/rostro→chaleco.
+> * **Colores**: `Safety-vest` cian `(0,255,255)` distinto de `Head` oro `(0,215,255)` y `Glasses` cian claro `(255,255,0)`.
 
 ---
 

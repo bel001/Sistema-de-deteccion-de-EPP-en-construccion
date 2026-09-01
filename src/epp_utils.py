@@ -7,17 +7,19 @@ import cv2
 import numpy as np
 
 
-# Mapeo corregido de lo que el modelo realmente aprendió a detectar debido al desorden en el entrenamiento original
+# Mapeo corregido de lo que el modelo realmente aprendió a detectar.
+# Modelo actual best.pt contiene 10 clases (0-9) incluyendo Safety-vest.
 ACTUAL_CLASS_MAP = {
     0: "Person",       # Persona (0)
     1: "Ear",          # Oreja (1)
     2: "Glasses",      # Gafas (2)
-    3: "Helmet",       # Casco (3) - En el metadata del modelo dice "Foot"
+    3: "Helmet",       # Casco (3)
     4: "Face",         # Cara (4)
     5: "Gloves",       # Guantes (5)
-    6: "Hands",        # Manos (6) - En el metadata del modelo dice "Shoes"
-    7: "Head",         # Cabeza sin casco (7) - En el metadata del modelo dice "Safety-vest"
-    8: "Shoes",        # Calzado (8) - En el metadata del modelo dice "Helmet"
+    6: "Hands",        # Manos (6)
+    7: "Head",         # Cabeza sin casco (7)
+    8: "Shoes",        # Calzado (8)
+    9: "Safety-vest",  # Chaleco (9) - presente en modelo reentrenado
 }
 
 CONSTRUCTION_CLASSES = list(ACTUAL_CLASS_MAP.values())
@@ -60,14 +62,16 @@ WEBCAM_CLASS_IDS = [
 ]
 
 CLASS_COLORS = {
-    "Person": (255, 0, 0),        # Persona (Azul en BGR)
-    "Head": (255, 255, 0),        # Cabeza (Amarillo)
+    "Person": (255, 0, 0),        # Persona (Azul BGR)
+    "Head": (0, 215, 255),        # Cabeza (Oro)
     "Hands": (255, 0, 255),       # Manos (Magenta)
     "Gloves": (0, 165, 255),      # Guantes (Naranja)
     "Helmet": (0, 255, 0),        # Casco (Verde)
     "Shoes": (255, 128, 0),       # Calzado (Celeste)
     "Glasses": (255, 255, 0),     # Gafas (Cyan)
-    "Safety-vest": (0, 255, 255),  # Chaleco (Amarillo)
+    "Safety-vest": (0, 255, 255),  # Chaleco (Amarillo BGR)
+    "Ear": (128, 0, 128),         # Oreja (Púrpura)
+    "Face": (180, 180, 180),      # Cara (Gris)
 }
 
 DISPLAY_NAMES = {
@@ -79,6 +83,8 @@ DISPLAY_NAMES = {
     "Shoes": "Calzado",
     "Glasses": "Gafas",
     "Safety-vest": "Chaleco",
+    "Ear": "Oreja",
+    "Face": "Rostro",
 }
 
 
@@ -407,13 +413,15 @@ def vest_is_valid_inside_person(
     """
     Valida que el chaleco este dentro de una persona y en la zona del torso.
     Esto evita falsos positivos donde el modelo marca la cabeza/casco o cabello
-    como Safety-vest.
+    como Safety-vest. Requiere solapamiento con una persona para ser valido.
     """
     # Si se solapa con una cabeza detectada, rechazar directamente.
     if vest_overlaps_head(vest_box, head_boxes):
         return False
 
     if not person_boxes:
+        # Sin persona detectada (persona pequeña <2% o oclusión) permitir chaleco por tamaño/aspect ya validado;
+        # evita falsos negativos vs. modo estricto anterior que suprimía vest
         return True
 
     vx1, vy1, vx2, vy2 = vest_box

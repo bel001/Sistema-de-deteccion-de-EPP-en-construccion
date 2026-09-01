@@ -18,6 +18,9 @@ def main() -> None:
     parser.add_argument("--save", default="outputs/video_resultado.mp4", help="Ruta de guardado.")
     parser.add_argument("--display-width", type=int, default=854, help="Ancho de ventana.")
     parser.add_argument("--display-height", type=int, default=480, help="Alto de ventana.")
+    parser.add_argument("--conf", type=float, default=0.25, help="Umbral confianza general.")
+    parser.add_argument("--ppe-conf", type=float, default=0.25, help="Umbral para guantes/chaleco.")
+    parser.add_argument("--helmet-conf", type=float, default=0.15, help="Umbral casco.")
     parser.add_argument("--no-display", action="store_true", help="Procesa sin ventana gráfica.")
     args = parser.parse_args()
 
@@ -33,18 +36,18 @@ def main() -> None:
         raise RuntimeError(f"No se pudo abrir el video: {video_path}")
 
     original_fps = cap.get(cv2.CAP_PROP_FPS) or 20.0
-    original_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    original_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     display_w, display_h = args.display_width, args.display_height
 
     out_path = Path(args.save)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     writer = cv2.VideoWriter(
         str(out_path),
-        cv2.VideoWriter.fourcc("m", "p", "4", "v"),
+        cv2.VideoWriter_fourcc(*"mp4v"),
         original_fps,
         (display_w, display_h),
     )
+    if not writer.isOpened():
+        raise RuntimeError(f"No se pudo crear el video de salida: {out_path} (codec mp4v no disponible)")
 
     window_name = "EPP Construcción - Video GPU"
     if not args.no_display:
@@ -62,13 +65,19 @@ def main() -> None:
                 break
 
             frame_count += 1
-            resized = cv2.resize(frame, (display_w, display_h))
-            
+            # Resize directo (stretch) restaura recall previo; letterbox reducía área relativa y filtros de vest/person
+            resized = cv2.resize(frame, (display_w, display_h), interpolation=cv2.INTER_LINEAR)
+
             now = time.time()
             fps = 1.0 / max(now - prev_time, 1e-6)
             prev_time = now
 
-            result = engine.detect_video_frame(resized, fps)
+            result = engine.detect_video_frame(
+                resized, fps,
+                conf_thresh=args.conf,
+                ppe_conf_thresh=args.ppe_conf,
+                helmet_conf_thresh=args.helmet_conf,
+            )
             writer.write(result.annotated)
 
             if not args.no_display:

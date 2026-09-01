@@ -32,7 +32,7 @@ def create_writer(save_path: str, width: int, height: int) -> cv2.VideoWriter | 
 
     output_path = Path(save_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fourcc = cv2.VideoWriter.fourcc("m", "p", "4", "v")
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(str(output_path), fourcc, 20, (width, height))
 
     if not writer.isOpened():
@@ -50,11 +50,14 @@ def main() -> None:
     if not cap.isOpened():
         raise RuntimeError("No se pudo abrir la cámara. Prueba --camera 1 o --camera 2.")
 
-    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*"MJPG"))
+    # Intentar MJPG para HD, fallback silencioso si no soportado
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-    cap.set(cv2.CAP_PROP_FPS, 30)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+    for _ in range(5):
+        cap.read()
 
     width: int = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height: int = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))

@@ -9,15 +9,14 @@ IF NOT EXIST ".venv" (
     py -3 -m venv .venv
     call .venv\Scripts\activate.bat
     python -m pip install --upgrade pip
-    python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-    python -m pip install ultralytics opencv-python numpy pandas pillow
+    python -m pip install -r requirements.txt
 ) ELSE (
     call .venv\Scripts\activate.bat
 )
 
 IF NOT EXIST "weights\best.pt" (
     IF EXIST "weights\best.pt.zip" (
-        echo [INFO] Preparando modelo weights\best.pt...
+        echo [INFO] Preparando modelo weights\best.pt (copia identica)...
         copy /y "weights\best.pt.zip" "weights\best.pt"
     )
 )
